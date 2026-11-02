@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unit and Currency Converter</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(135deg,#0f766e,#134e4a);min-height:100vh;display:flex;justify-content:center;align-items:center;padding:16px;color:#0f172a}
+.card{background:#fff;border-radius:16px;padding:24px;width:100%;max-width:520px;box-shadow:0 12px 30px #0004}
+h1{font-size:24px;margin-bottom:14px;text-align:center}
+.tabs{display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap}
+.tabs button{flex:1;padding:9px;border:1px solid #cbd5e1;background:#f8fafc;border-radius:8px;cursor:pointer;font-size:14px}
+.tabs button.on{background:#0f766e;color:#fff;border-color:#0f766e}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+label{font-size:13px;color:#475569;display:block;margin-bottom:4px}
+input,select{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px}
+input:focus,select:focus{outline:2px solid #0f766e;border-color:transparent}
+.swap{display:block;margin:0 auto 12px;padding:8px 18px;border:none;border-radius:20px;background:#ccfbf1;color:#0f766e;font-weight:700;cursor:pointer}
+.swap:hover{background:#99f6e4}
+.result{background:#f0fdfa;border:1px solid #99f6e4;border-radius:10px;padding:14px;text-align:center;font-size:22px;font-weight:700;word-break:break-word}
+.note{margin-top:10px;font-size:13px;color:#64748b;text-align:center;min-height:18px}
+.err{color:#b91c1c}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Unit and Currency Converter</h1>
+  <div class="tabs" id="tabs"></div>
+  <div class="row">
+    <div><label for="amount">Amount</label><input id="amount" type="number" value="1" step="any"></div>
+    <div></div>
+  </div>
+  <div class="row">
+    <div><label for="from">From</label><select id="from"></select></div>
+    <div><label for="to">To</label><select id="to"></select></div>
+  </div>
+  <button class="swap" id="swap">⇅ Swap</button>
+  <div class="result" id="result">-</div>
+  <div class="note" id="note"></div>
+</div>
+
+<script>
+const FACTORS = {
+  Length: { 'Meter':1, 'Kilometer':1000, 'Centimeter':0.01, 'Millimeter':0.001, 'Mile':1609.344, 'Yard':0.9144, 'Foot':0.3048, 'Inch':0.0254 },
+  Weight: { 'Kilogram':1, 'Gram':0.001, 'Milligram':1e-6, 'Tonne':1000, 'Pound':0.45359237, 'Ounce':0.028349523125 },
+  Temperature: { 'Celsius':1, 'Fahrenheit':1, 'Kelvin':1 }
+};
+const CATS = ['Length', 'Weight', 'Temperature', 'Currency'];
+const DEFAULTS = { Length:['Kilometer','Mile'], Weight:['Kilogram','Pound'], Temperature:['Celsius','Fahrenheit'], Currency:['USD','INR'] };
+const $ = id => document.getElementById(id);
+let cat = 'Length', rates = null, ratesInfo = '';
+
+function fmt(n) {
+  if (!isFinite(n)) return '-';
+  return n.toLocaleString('en-US', { maximumFractionDigits: 6 });
+}
+
+function names() { return cat === 'Currency' ? (rates ? Object.keys(rates).sort() : []) : Object.keys(FACTORS[cat]); }
+
+function fillSelects(keep) {
+  const list = names();
+  ['from', 'to'].forEach((id, i) => {
+    const sel = $(id), prev = sel.value;
+    sel.innerHTML = list.map(n => `<option>${n}</option>`).join('');
+    sel.value = keep && list.includes(prev) ? prev : DEFAULTS[cat][i];
+  });
+}
+
+function toCelsius(v, u) { return u === 'Celsius' ? v : u === 'Fahrenheit' ? (v - 32) * 5 / 9 : v - 273.15; }
+function fromCelsius(c, u) { return u === 'Celsius' ? c : u === 'Fahrenheit' ? c * 9 / 5 + 32 : c + 273.15; }
+
+function convert() {
+  const v = parseFloat($('amount').value);
+  const from = $('from').value, to = $('to').value;
+  $('note').className = 'note';
+  if (isNaN(v)) { $('result').textContent = '-'; return; }
+  let out;
+  if (cat === 'Temperature') out = fromCelsius(toCelsius(v, from), to);
+  else if (cat === 'Currency') {
+    if (!rates) { $('result').textContent = '-'; return; }
+    out = v / rates[from] * rates[to];
+  } else out = v * FACTORS[cat][from] / FACTORS[cat][to];
+  $('result').textContent = `${fmt(v)} ${from} = ${fmt(out)} ${to}`;
+  $('note').textContent = cat === 'Currency' ? ratesInfo : '';
+}
+
+async function loadRates() {
+  $('result').textContent = 'Loading rates...';
+  try {
+    const res = await fetch('https://api.frankfurter.dev/v1/latest?base=USD');
+    if (!res.ok) throw new Error('bad response');
+    const data = await res.json();
+    rates = { USD: 1, ...data.rates };
+    ratesInfo = `Rates from ${data.date} (reference rates, not for trading)`;
+    try { localStorage.setItem('fxRates', JSON.stringify({ rates, date: data.date })); } catch (e) {}
+  } catch (e) {
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem('fxRates')); } catch (e2) {}
+    if (cached) { rates = cached.rates; ratesInfo = `Offline: using saved rates from ${cached.date}`; }
+    else {
+      rates = null;
+      $('result').textContent = '-';
+      $('note').className = 'note err';
+      $('note').textContent = 'Could not load exchange rates. Check your internet connection.';
+      return;
+    }
+  }
+  fillSelects(false);
+  convert();
+}
+
+function setCat(c) {
+  cat = c;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.c === c));
+  $('note').textContent = '';
+  if (c === 'Currency' && !rates) { fillSelects(false); loadRates(); return; }
+  fillSelects(false);
+  convert();
+}
+
+CATS.forEach(c => {
+  const b = document.createElement('button');
+  b.textContent = c; b.dataset.c = c;
+  b.addEventListener('click', () => setCat(c));
+  $('tabs').appendChild(b);
+});
+['amount', 'from', 'to'].forEach(id => $(id).addEventListener('input', convert));
+$('swap').addEventListener('click', () => { const f = $('from').value; $('from').value = $('to').value; $('to').value = f; convert(); });
+setCat('Length');
+</script>
+</body>
+</html>
